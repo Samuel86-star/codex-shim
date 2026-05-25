@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import re
 from typing import Any
@@ -12,10 +13,13 @@ DEFAULT_CODEX_AUTH = Path.home() / ".codex" / "auth.json"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 PROVIDER_NAME = "codex_shim"
+CHATGPT_MODEL_SLUG = "gpt-5.5"
 
 
 def chatgpt_passthrough_available(auth_path: Path | None = None) -> bool:
     """Return True if ~/.codex/auth.json holds a usable Codex access token."""
+    if os.environ.get("CODEX_SHIM_DISABLE_CHATGPT", "").lower() in {"1", "true", "yes", "on"}:
+        return False
     if auth_path is None:
         import sys as _sys
 
@@ -198,9 +202,14 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
-def default_model_slug(models: list[ShimModel]) -> str:
-    if chatgpt_passthrough_available():
-        return "gpt-5.5"
+def default_model_slug(models: list[ShimModel], include_chatgpt: bool | None = None) -> str:
+    if include_chatgpt is None:
+        include_chatgpt = chatgpt_passthrough_available()
+    if include_chatgpt:
+        return CHATGPT_MODEL_SLUG
     if models:
         return models[0].slug
-    return "gpt-5.5"
+    raise ValueError(
+        "No usable codex-shim models: add models to ~/.codex-shim/models.json, run `codex login`, "
+        "or unset CODEX_SHIM_DISABLE_CHATGPT if ChatGPT passthrough should be used."
+    )

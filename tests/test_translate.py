@@ -12,6 +12,28 @@ def test_responses_to_chat_text_input():
     assert out["messages"] == [{"role": "system", "content": "System"}, {"role": "user", "content": "Hello"}]
 
 
+def test_responses_to_chat_preserves_reasoning_and_effort_for_deepseek():
+    body = {
+        "model": "slug",
+        "reasoning_effort": "high",
+        "input": [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "prior thought"}]},
+            {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "prior answer"}]},
+            {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "rules"}]},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "next"}]},
+        ],
+    }
+
+    out = responses_to_chat(body, "deepseek-reasoner")
+
+    assert out["reasoning_effort"] == "high"
+    assert out["messages"] == [
+        {"role": "assistant", "content": "prior answer", "reasoning_content": "prior thought"},
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "next"},
+    ]
+
+
 def test_responses_function_tools_convert_to_chat_shape():
     body = {
         "model": "slug",

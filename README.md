@@ -222,7 +222,6 @@ Generated runtime files live under the repo-local `.codex-shim/` directory:
 ```text
 .codex-shim/custom_model_catalog.json   # model picker catalog for Codex
 .codex-shim/config.toml                  # opt-in Codex provider config
-.codex-shim/config.toml.before-codex-shim # backup of your previous Codex config
 .codex-shim/shim.pid                     # daemon pid
 .codex-shim/shim.log                     # stdout/stderr + request summaries
 ```
@@ -894,9 +893,11 @@ Config behavior:
 - `codex-shim generate`, `start`, `stop`, `restart`, `list`, `status`, and
   `codex-shim codex -- ...` do not persistently modify `~/.codex/config.toml`.
 - `codex-shim enable`, `codex-shim app`, and `codex-shim model use <slug>` write
-  a managed block to `~/.codex/config.toml` and keep a backup under
-  `.codex-shim/`.
-- `codex-shim disable` removes the managed block and stops the daemon.
+  managed blocks to `~/.codex/config.toml`. If existing top-level Codex model
+  keys are displaced, the managed block records them so disable can restore
+  those keys without reverting unrelated config edits.
+- `codex-shim disable` removes the managed blocks, restores displaced top-level
+  model keys when present, and stops the daemon.
 
 ---
 

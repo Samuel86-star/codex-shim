@@ -6,7 +6,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from codex_shim.server import ShimServer, _sanitize_chatgpt_passthrough_body
+from codex_shim.server import ShimServer, _rewrite_response_model, _sanitize_chatgpt_passthrough_body
 from codex_shim.translate import SHIM_ENCRYPTED_CONTENT_PREFIX
 
 
@@ -15,12 +15,15 @@ def auth_present(monkeypatch, tmp_path):
     auth = tmp_path / "auth.json"
     auth.write_text(json.dumps({"tokens": {"access_token": "stub", "account_id": "acct"}}))
     monkeypatch.setattr("codex_shim.settings.DEFAULT_CODEX_AUTH", auth)
+    monkeypatch.setattr("codex_shim.server.DEFAULT_CODEX_AUTH", auth)
     return auth
 
 
 @pytest.fixture
 def auth_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr("codex_shim.settings.DEFAULT_CODEX_AUTH", tmp_path / "missing-auth.json")
+    missing = tmp_path / "missing-auth.json"
+    monkeypatch.setattr("codex_shim.settings.DEFAULT_CODEX_AUTH", missing)
+    monkeypatch.setattr("codex_shim.server.DEFAULT_CODEX_AUTH", missing)
 
 
 def test_sanitize_chatgpt_passthrough_body_drops_shim_reasoning():
@@ -74,6 +77,96 @@ def test_sanitize_chatgpt_passthrough_body_removes_nested_shim_encrypted_content
 
     assert "encrypted_content" not in sanitized["input"][0]["content"][0]
     assert "encrypted_content" in body["input"][0]["content"][0]
+
+
+def test_rewrite_response_model_only_rewrites_chatgpt_metadata():
+    payload = {
+        "model": "gpt-5.5",
+        "nested": [{"model": "gpt-5.5"}, {"model": "other"}],
+    }
+
+    _rewrite_response_model(payload, "custom-model")
+
+    assert payload == {
+        "model": "custom-model",
+        "nested": [{"model": "custom-model"}, {"model": "other"}],
+    }
+
+
+def test_image_generation_detection_is_conservative():
+    shim = ShimServer()
+    tools = [
+        {"type": "function", "function": {"name": "shell"}},
+        {"type": "image_generation", "name": "image_generation"},
+    ]
+
+    assert shim._needs_image_gen({"tools": tools, "input": [{"role": "user", "content": "write code for an icon component"}]}) is False
+    assert shim._needs_image_gen({"tools": tools, "input": [{"role": "user", "content": "@image generate a neon fox"}]}) is True
+    assert shim._needs_image_gen({"tools": tools, "tool_choice": {"type": "image_generation"}, "input": "hi"}) is True
+    assert shim._needs_image_followup(
+        {
+            "input": [
+                {"type": "image_generation_call", "id": "ig_1"},
+                {"role": "user", "content": "make it brighter"},
+            ]
+        }
+    ) is True
+
+
+async def test_image_generation_routes_to_chatgpt_passthrough_and_rewrites_model(monkeypatch, tmp_path, auth_present):
+    captured = {}
+
+    class FakeUpstream:
+        status = 200
+        content_type = "application/json"
+
+        async def json(self, content_type=None):
+            return {"id": "resp_img", "model": "gpt-5.5", "output": [{"type": "image_generation_call", "model": "gpt-5.5"}]}
+
+        def release(self):
+            pass
+
+    async def fake_post(self, url, json=None, headers=None):
+        captured["url"] = url
+        captured["body"] = json
+        captured["headers"] = headers
+        return FakeUpstream()
+
+    monkeypatch.setattr("codex_shim.server.ClientSession.post", fake_post)
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "customModels": [
+                    {
+                        "model": "real-openai",
+                        "displayName": "Real OpenAI",
+                        "provider": "openai",
+                        "baseUrl": "http://example.invalid/v1",
+                    }
+                ]
+            }
+        )
+    )
+    shim_client = TestClient(TestServer(ShimServer(settings).app()))
+    await shim_client.start_server()
+
+    resp = await shim_client.post(
+        "/v1/responses",
+        json={
+            "model": "real-openai",
+            "input": [{"role": "user", "content": "@image generate a neon fox"}],
+            "tools": [{"type": "image_generation", "name": "image_generation"}],
+        },
+    )
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload["model"] == "real-openai"
+    assert payload["output"][0]["model"] == "real-openai"
+    assert captured["body"]["model"] == "gpt-5.5"
+    assert captured["headers"]["Authorization"] == "Bearer stub"
+
+    await shim_client.close()
 
 
 async def test_responses_routes_to_openai_chat(tmp_path):
@@ -161,6 +254,47 @@ async def test_health_and_models_hide_chatgpt_passthrough_when_auth_missing(tmp_
     assert payload["data"] == []
 
     await shim_client.close()
+
+
+async def test_chat_routes_to_openai_normalizes_developer_role(tmp_path):
+    captured = {}
+
+    async def chat(request):
+        captured["body"] = await request.json()
+        return web.json_response({"id": "chatcmpl_fake", "choices": [{"message": {"role": "assistant", "content": "ok"}}]})
+
+    upstream = web.Application()
+    upstream.router.add_post("/v1/chat/completions", chat)
+    upstream_client = TestClient(TestServer(upstream))
+    await upstream_client.start_server()
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "customModels": [
+                    {
+                        "model": "deepseek-reasoner",
+                        "displayName": "DeepSeek Reasoner",
+                        "provider": "openai",
+                        "baseUrl": str(upstream_client.make_url("/v1")),
+                    }
+                ]
+            }
+        )
+    )
+    shim_client = TestClient(TestServer(ShimServer(settings).app()))
+    await shim_client.start_server()
+
+    resp = await shim_client.post(
+        "/v1/chat/completions",
+        json={"model": "deepseek-reasoner", "messages": [{"role": "developer", "content": "rules"}, {"role": "user", "content": "hi"}]},
+    )
+    assert resp.status == 200
+    assert [message["role"] for message in captured["body"]["messages"]] == ["system", "user"]
+
+    await shim_client.close()
+    await upstream_client.close()
 
 
 async def test_chat_routes_to_anthropic(tmp_path):

@@ -198,6 +198,62 @@ def test_install_codex_config_is_idempotent(monkeypatch, tmp_path):
     assert text.count("model_catalog_json") == 1
 
 
+def test_install_and_restore_preserve_displaced_top_level_config(monkeypatch, tmp_path):
+    settings = tmp_path / "models.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "models": [
+                    {"model": "llama3.2", "display_name": "Llama", "provider": "generic-chat-completion-api", "base_url": "http://127.0.0.1:11434/v1"}
+                ]
+            }
+        )
+    )
+    config_path = tmp_path / ".codex" / "config.toml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        'model = "gpt-5.5"\n'
+        'model_provider = "openai"\n'
+        'model_catalog_json = "/tmp/catalog.json"\n'
+        '\n[profiles.dev]\nmodel = "profile-model"\n'
+    )
+    monkeypatch.setattr(cli, "RUNTIME_DIR", tmp_path / ".codex-shim")
+    monkeypatch.setattr(cli, "CODEX_CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli, "CODEX_CONFIG_BACKUP_PATH", tmp_path / ".codex-shim" / "config.toml.before-codex-shim")
+
+    cli.install_codex_config(settings, 8765, "llama3.2")
+    installed = config_path.read_text()
+    assert cli.PREVIOUS_TOP_LEVEL_PREFIX in installed
+    assert '\nmodel = "llama3-2"\n' in installed
+    assert '\nmodel_provider = "openai"\n' not in installed
+    assert '[profiles.dev]\nmodel = "profile-model"' in installed
+
+    cli.restore_codex_config()
+    restored = config_path.read_text().rstrip() + "\n"
+    assert restored == (
+        'model = "gpt-5.5"\n'
+        'model_provider = "openai"\n'
+        'model_catalog_json = "/tmp/catalog.json"\n'
+        '[profiles.dev]\nmodel = "profile-model"\n'
+    )
+
+
+def test_current_managed_model_ignores_user_top_level_and_stale_managed(monkeypatch, tmp_path, auth_missing):
+    config_path = tmp_path / ".codex" / "config.toml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        'model = "user-top"\n'
+        f'{cli.MANAGED_BEGIN}\n'
+        'model = "stale-managed"\n'
+        f'{cli.MANAGED_END}\n'
+    )
+    monkeypatch.setattr(cli, "CODEX_CONFIG_PATH", config_path)
+
+    model = ModelSettingsFixture.one()
+    assert cli._current_managed_model() == "stale-managed"
+    assert cli._resolve_model_slug([model], None) == "claude-opus"
+
+
 def test_loopback_no_proxy_adds_upper_and_lowercase_entries():
     env = cli._with_loopback_no_proxy({"NO_PROXY": "example.com,localhost"})
 
