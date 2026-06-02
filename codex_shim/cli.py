@@ -737,12 +737,25 @@ def exec_codex(settings_path: Path, port: int, codex_args: list[str]) -> None:
 
 def exec_codex_app(settings_path: Path, port: int, path: str) -> None:
     _quit_codex_app()
-    codex_app = patched_codex_app_bundle()
-    if codex_app is not None:
-        subprocess.Popen(["open", "-a", str(codex_app)], env=_with_loopback_no_proxy(os.environ.copy()))
-    else:
+    # Try codex CLI first; fall back to direct macOS app launch if not installed
+    import shutil
+    if shutil.which("codex"):
         args = ["codex", "app", path]
         subprocess.Popen(args, env=_with_loopback_no_proxy(os.environ.copy()))
+    else:
+        # codex CLI not found - launch Codex Desktop directly via macOS
+        if sys.platform == "darwin":
+            subprocess.Popen(
+                ["open", "-a", "Codex"],
+                env=_with_loopback_no_proxy(os.environ.copy()),
+            )
+        else:
+            print(
+                "codex CLI not found and not on macOS. "
+                "Please install codex CLI or open Codex Desktop manually.",
+                file=sys.stderr,
+            )
+            return
     _foreground_codex_app()
 
 

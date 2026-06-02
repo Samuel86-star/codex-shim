@@ -608,6 +608,22 @@ def test_desktop_bundle_patch_handles_extracted_filter_helper(tmp_path):
     assert cli._patch_codex_desktop_bundles(tmp_path) is False
 
 
+def test_desktop_bundle_patch_handles_renamed_minifier_locals(tmp_path):
+    """New Codex Desktop builds shuffle obfuscated variable names; the regex
+    needles must still match and preserve those names in the replacement."""
+    assets = tmp_path / "webview" / "assets"
+    assets.mkdir(parents=True)
+    model_bundle = assets / "model-queries-test.js"
+    sidebar_bundle = assets / "app-server-manager-signals-test.js"
+    # Old bundle names: o/d for picker, ke for sidebar.
+    model_bundle.write_text(_make_picker_bundle(vars_o="o", vars_d="d"))
+    sidebar_bundle.write_text(_make_sidebar_bundle(sk="ke"))
+
+    assert cli._patch_codex_desktop_bundles(tmp_path) is True
+    assert "let u=!1,d;" in model_bundle.read_text()
+    assert "modelProviders:[],archived:!1,sourceKinds:ke" in sidebar_bundle.read_text()
+
+
 def test_desktop_bundle_patch_fails_when_sidebar_needle_is_missing(tmp_path):
     assets = tmp_path / "webview" / "assets"
     assets.mkdir(parents=True)
