@@ -777,6 +777,11 @@ class ShimServer:
         url = _join_url(route.base_url, "/chat/completions")
         headers = _openai_headers(route)
         _dump_debug_request(route.slug, url, body)
+        print(
+            f"[route] slug={route.slug!r} provider={route.provider!r} "
+            f"upstream_model={route.model!r} url={url}",
+            flush=True,
+        )
         async with ClientSession(timeout=self.timeout) as session:
             upstream = await session.post(url, json=body, headers=headers)
             if upstream.status >= 400:
@@ -811,6 +816,11 @@ class ShimServer:
     ) -> web.StreamResponse:
         url = _join_url(route.base_url, "/messages")
         headers = _anthropic_headers(route)
+        print(
+            f"[route] slug={route.slug!r} provider={route.provider!r} "
+            f"upstream_model={route.model!r} url={url}",
+            flush=True,
+        )
         async with ClientSession(timeout=self.timeout) as session:
             upstream = await session.post(url, json=body, headers=headers)
             if upstream.status >= 400:
