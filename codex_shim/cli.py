@@ -69,6 +69,17 @@ APP_ASAR_BACKUP_NAME = "app.asar.before-codex-shim-model-picker-patch"
 INFO_PLIST_BACKUP_NAME = "Info.plist.before-codex-shim-model-picker-patch"
 SYSTEM_CODEX_APP = Path("/Applications/Codex.app")
 USER_CODEX_APP = Path.home() / "Applications" / "Codex.app"
+# Picker allowlist needle. The filter logic moved between bundles:
+# - Older Codex Desktop builds inlined it in model-queries-*.js as
+#     let u=c.useHiddenModels&&o!==`amazonBedrock`,d;
+# - Newer builds (post Codex Desktop 26.6xx) extracted the filter helper into
+#   models-and-reasoning-efforts-*.js with the equivalent shape (note the
+#   first operand is now a bare local instead of a property access):
+#     s=i&&e!==`amazonBedrock`;
+# We match either form by allowing the left-of-`&&` operand to be either a
+# bare identifier or a `<obj>.useHiddenModels` property access, and capture
+# the assignment LHS so the replacement preserves the surrounding statement
+# regardless of whether it starts with `let`.
 MODEL_PICKER_NEEDLE = re.compile(
     r"(?P<lhs>(?:let )?\w+=)"
     r"(?:\w+\.useHiddenModels|\w+)"
@@ -76,6 +87,11 @@ MODEL_PICKER_NEEDLE = re.compile(
     r"(?P<sep>[,;])"
 )
 MODEL_PICKER_REPLACEMENT = r"\g<lhs>!1\g<sep>"
+# Post-patch marker — used so re-runs are reported as idempotent rather than
+# failing. After the patch the original `useHiddenModels && … amazonBedrock`
+# expression no longer exists; we look for the residual assignment shape.
+# Use a non-greedy lookbehind-free check: any `<lhs>=!1[,;]` that sits next
+# to a `forEach` over a `models` collection (the function's actual purpose).
 MODEL_PICKER_APPLIED = re.compile(
     r"(?:let )?\w+=!1[,;][^\n]{0,300}\.forEach"
 )
@@ -864,6 +880,10 @@ def _patch_codex_desktop_bundles(workdir: Path) -> bool | None:
     patches = [
         (
             "model picker allowlist filter",
+            # The filter helper moved between releases:
+            #   - older bundles inlined it in model-queries-*.js
+            #   - newer bundles factored it into models-and-reasoning-efforts-*.js
+            # Probe both before falling back to the broad *.js sweep.
             [
                 "models-and-reasoning-efforts-*.js",
                 "model-queries-*.js",

@@ -572,19 +572,40 @@ def test_desktop_bundle_patch_handles_extracted_filter_helper(tmp_path):
 
 
 def test_desktop_bundle_patch_handles_renamed_minifier_locals(tmp_path):
-    """New Codex Desktop builds shuffle obfuscated variable names; the regex
+    """Older Codex Desktop builds shuffle obfuscated variable names; the regex
     needles must still match and preserve those names in the replacement."""
     assets = tmp_path / "webview" / "assets"
     assets.mkdir(parents=True)
     model_bundle = assets / "model-queries-test.js"
     sidebar_bundle = assets / "app-server-manager-signals-test.js"
-    # Old bundle names: o/d for picker, ke for sidebar.
     model_bundle.write_text(_make_picker_bundle(vars_o="o", vars_d="d"))
     sidebar_bundle.write_text(_make_sidebar_bundle(sk="ke"))
 
     assert cli._patch_codex_desktop_bundles(tmp_path) is True
     assert "let u=!1,d;" in model_bundle.read_text()
     assert "modelProviders:[],archived:!1,sourceKinds:ke" in sidebar_bundle.read_text()
+
+
+def test_desktop_bundle_patch_handles_extracted_filter_helper(tmp_path):
+    """Recent Codex Desktop builds factor the filter into
+    models-and-reasoning-efforts-*.js with a bare-identifier RHS (no `let`,
+    `;` terminator). Sidebar is already shipped with `modelProviders:[]`, so
+    the sidebar patch should report idempotent."""
+    assets = tmp_path / "webview" / "assets"
+    assets.mkdir(parents=True)
+    new_picker = assets / "models-and-reasoning-efforts-test.js"
+    sidebar = assets / "app-server-manager-signals-test.js"
+    new_picker.write_text(_make_new_picker_bundle())
+    sidebar.write_text(_make_sidebar_bundle(model_providers="[]", sk="pe"))
+
+    assert cli._patch_codex_desktop_bundles(tmp_path) is True
+    # Picker filter neutralised: `s=i&&e!==…` → `s=!1`.
+    assert "s=!1;" in new_picker.read_text()
+    assert "amazonBedrock" not in new_picker.read_text()
+    # Sidebar untouched (already shipped with the fix upstream).
+    assert "modelProviders:[],archived:!1,sourceKinds:pe" in sidebar.read_text()
+    # Idempotent on a second pass.
+    assert cli._patch_codex_desktop_bundles(tmp_path) is False
 
 
 def test_desktop_bundle_patch_fails_when_sidebar_needle_is_missing(tmp_path):
