@@ -56,7 +56,6 @@ from .translate import (
     _chat_finish_to_anthropic_stop,
     _responses_usage_to_anthropic_usage,
 )
-from .vision_router import is_vision_routing_enabled, select_model_with_vision_routing
 
 DEBUG_DIR = Path(__file__).resolve().parents[1] / ".codex-shim"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
@@ -228,7 +227,7 @@ class ShimServer:
 
     async def anthropic_messages(self, request: web.Request) -> web.StreamResponse:
         body = await request.json()
-        route = self._route(body)
+        route, body = self._route(body)
         if route.is_openai_chat:
             forwarded = anthropic_messages_to_chat(body, route.model, route.max_output_tokens)
             return await self._post_openai_chat_as_anthropic(request, route, forwarded)
@@ -691,12 +690,19 @@ class ShimServer:
         classify = None
         if config.classifier:
             classifier_model = self.settings.by_slug_or_model(config.classifier)
-            if (
-                classifier_model is not None
-                and byok_model_has_credentials(classifier_model)
-                and (classifier_model.is_openai_chat or classifier_model.is_anthropic)
-            ):
-                classify = self._make_classifier(classifier_model, config)
+            print(f"[diag] router: classifier slug={config.classifier!r}, model_found={classifier_model is not None}", flush=True)
+            if classifier_model is not None:
+                has_creds = byok_model_has_credentials(classifier_model)
+                is_compat = classifier_model.is_openai_chat or classifier_model.is_anthropic
+                print(f"[diag] router: has_creds={has_creds}, is_compat={is_compat}", flush=True)
+                if has_creds and is_compat:
+                    classify = self._make_classifier(classifier_model, config)
+                else:
+                    print(f"[diag] router: classifier unavailable - has_creds={has_creds}, is_compat={is_compat}", flush=True)
+            else:
+                print(f"[diag] router: classifier model not found for slug={config.classifier!r}", flush=True)
+        else:
+            print(f"[diag] router: no classifier configured", flush=True)
         log = (lambda message: print(message, flush=True)) if router_module.router_log_enabled() else None
         resolved, _info = await router_module.resolve_auto(config, candidates, body, classify, log=log)
         return resolved or router_module.fallback_slug(
@@ -740,30 +746,7 @@ class ShimServer:
         return classify
 
     def _route(self, body: dict[str, Any]) -> tuple[ShimModel, dict[str, Any]]:
-        """
-        Route request to appropriate model.
-
-        If vision routing is enabled, intelligently selects between vision and text models.
-        Otherwise, uses the requested model directly.
-
-        Returns:
-            Tuple of (selected_model, potentially_modified_body)
-        """
         requested = str(body.get("model") or "")
-
-        # If vision routing is enabled, use smart routing
-        if is_vision_routing_enabled():
-            models = self.settings.load()
-            if not models:
-                raise web.HTTPNotFound(text="No models configured")
-
-            try:
-                route, body = select_model_with_vision_routing(body, models, default_slug=requested)
-                return route, body
-            except ValueError as e:
-                raise web.HTTPBadRequest(text=str(e))
-
-        # Default behavior: use requested model
         route = self.settings.by_slug_or_model(requested)
         if route is None:
             raise web.HTTPNotFound(text=f"Unknown model slug/model: {requested}")
