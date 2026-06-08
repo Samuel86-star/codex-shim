@@ -782,6 +782,9 @@ class ShimServer:
             f"upstream_model={route.model!r} url={url}",
             flush=True,
         )
+        if route.no_parallel_tool_calls:
+            body.pop("parallel_tool_calls", None)
+            body.pop("tool_choice", None)
         async with ClientSession(timeout=self.timeout) as session:
             upstream = await session.post(url, json=body, headers=headers)
             if upstream.status >= 400:
