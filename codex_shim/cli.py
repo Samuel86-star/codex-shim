@@ -653,6 +653,7 @@ def start(settings_path: Path, port: int) -> int:
     ]
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONUNBUFFERED"] = "1"
     process = _popen_daemon(cmd, log, env)
     PID_PATH.write_text(str(process.pid))
     for _ in range(50):

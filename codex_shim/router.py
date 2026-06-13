@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
-DEFAULT_ROUTER_SLUG = "codex-auto"
+DEFAULT_ROUTER_SLUG = "shim-auto"
 DEFAULT_ROUTER_DISPLAY_NAME = "Auto (smart routing)"
 DEFAULT_THRESHOLD = 0.7
 DEFAULT_TIMEOUT = 12.0
