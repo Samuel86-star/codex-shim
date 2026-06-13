@@ -17,7 +17,7 @@ import json
 import plistlib
 import re
 import struct
-from urllib.request import urlopen
+import http.client
 
 from . import router as router_module
 from .catalog import _toml_escape, codex_config_overrides, write_catalog, write_config
@@ -1320,10 +1320,15 @@ def _healthy(port: int) -> bool:
 
 def _health(port: int) -> dict | None:
     try:
-        with urlopen(f"http://{DEFAULT_HOST}:{port}/health", timeout=0.5) as response:
-            if response.status != 200:
-                return None
-            return json.loads(response.read().decode("utf-8"))
+        conn = http.client.HTTPConnection(DEFAULT_HOST, port, timeout=0.5)
+        conn.request("GET", "/health")
+        response = conn.getresponse()
+        if response.status != 200:
+            conn.close()
+            return None
+        result = json.loads(response.read().decode("utf-8"))
+        conn.close()
+        return result
     except Exception:
         return None
 
